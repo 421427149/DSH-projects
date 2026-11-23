@@ -4,7 +4,7 @@
 
 [中文](README.md)
 
-[![DSH-projects film, 1:47, Chinese captions](docs/launch/film-cover-en.jpg)](https://hovocope135-tech.github.io/DSH-projects/launch/dsh-projects-film.mp4)
+[![DSH-projects film, 1:47, Chinese captions](docs/launch/film-cover.jpg)](https://hovocope135-tech.github.io/DSH-projects/launch/dsh-projects-film.mp4)
 
 Do you keep switching between sessions, and does setting up each agent give you a headache? Do you wish you could keep a large number of agent conversations in hand without carrying context back and forth yourself?
 
