@@ -7,6 +7,7 @@ import { createTools, visibleTo } from '../tools.js'
 import { rolePrompt, wakeText, continuityNotice, NUDGE, UNANSWERED } from '../protocol.js'
 import { NodeClient } from './node-client.js'
 import { readWorkspaceFile, FILE_CHUNK_BYTES } from '../files.js'
+import { presentNatively } from '../compat.js'
 
 const digest = value => createHash('sha256').update(value).digest('hex')
 const NATIVE = new Set(['read', 'read_image', 'write', 'edit', 'bash', 'grep', 'glob'])
@@ -34,7 +35,7 @@ export async function applyContainerNode(ctx) {
     if (agent.id !== hello.sessionId) return
     const inherited = ctx.tools.schemas().map(tool => tool.name).filter(name => name !== 'run_code')
     if (inherited.length) agent.ctx.tools.restrict({ deny: inherited })
-    agent.ctx.tools.presentAs('native')
+    presentNatively(agent.ctx)
     agent.ctx.systemPrompt.section({ name: 'mira-projects:container-role', order: 10100, interpolate: false, text: rolePrompt(project, hello.key) })
     agent.ctx.on('agent/error', ({ error }) => { turn.error = error || new Error('DSH turn failed') })
     for (const { definition } of defs) agent.ctx.tools.register(defineTool({ ...definition, execute: async (args, exec) => {

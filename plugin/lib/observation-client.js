@@ -7,6 +7,7 @@ import { join, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { uptime } from 'node:os'
 import { observationImage, observationPolicy, normalizeObservation, OBSERVATION_DEFAULTS } from './observations.js'
+import { ownedAndPrivate } from './compat.js'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const CHUNK = 512 * 1024
@@ -81,7 +82,7 @@ export class ObservationClient {
     if (resolve(directory) !== directory) fail('待发目录需要规范绝对路径')
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     const info = statSync(directory)
-    if (realpathSync(directory) !== directory || info.uid !== process.getuid() || info.mode & 0o077) fail('待发目录必须由当前用户私有持有')
+    if (realpathSync(directory) !== directory || !ownedAndPrivate(info)) fail('待发目录必须由当前用户私有持有')
     this.options = { directory, serverUrl: url.origin, deviceId, token, fetcher, now, monotonic, leaseSeconds }
     this.owner = randomUUID();this.busy = false;this.closed = false
     const file = join(directory, 'observations.sqlite')
