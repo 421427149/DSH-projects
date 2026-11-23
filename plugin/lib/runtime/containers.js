@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath, stat, writeFile, unlink, mkdir } from 'node:fs/promises'
+import { currentUid, currentGid } from '../compat.js'
 
 const exec = promisify(execFile)
 const hash = value => createHash('sha256').update(value).digest('hex').slice(0, 20)
@@ -10,7 +11,7 @@ const argsFor = labels => Object.entries(labels).flatMap(([key, value]) => ['--l
 const nativeError = message => { throw new Error(message) }
 
 export class DockerNodes {
-  constructor({ stateRoot, schema, image, uid = process.getuid(), gid = process.getgid(), nodeId }) {
+  constructor({ stateRoot, schema, image, uid = currentUid(), gid = currentGid(), nodeId }) {
     this.stateRoot = stateRoot;this.schema = schema;this.image = image;this.uid = uid;this.gid = gid
     this.owner = { 'mira-projects.owner': 'runtime-container-node', 'mira-projects.state': stateRoot, 'mira-projects.schema': schema }
     if (nodeId) this.owner['mira-projects.node-id'] = nodeId

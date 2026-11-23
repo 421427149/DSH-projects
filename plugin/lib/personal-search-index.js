@@ -1,8 +1,9 @@
 /** Rebuildable, private search projection. Journals remain the citation authority. */
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
-import { constants, mkdirSync, lstatSync, realpathSync, readFileSync, readSync, openSync, closeSync, writeFileSync, fsyncSync, chmodSync, unlinkSync } from 'node:fs'
+import { constants, mkdirSync, lstatSync, realpathSync, readFileSync, readSync, openSync, closeSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
+import { syncFd } from './compat.js'
 
 const APPLICATION_ID = 0x4d495253, VERSION = 1
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -42,7 +43,7 @@ export class PersonalSearchIndex {
       // An existing unclaimed file is never adopted or deleted as a cache.
       if (['', '-journal', '-wal', '-shm'].some(suffix => absent(this.file + suffix))) throw Error('索引缓存没有归属记录')
       const fd = openSync(ownerFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-      try { writeFileSync(fd, JSON.stringify(expected));fsyncSync(fd) } finally { closeSync(fd) }
+      try { writeFileSync(fd, JSON.stringify(expected));syncFd(fd) } finally { closeSync(fd) }
       this.syncDirectory()
     }
     for (const suffix of ['', '-journal', '-wal', '-shm']) regular(this.file + suffix)
@@ -50,7 +51,7 @@ export class PersonalSearchIndex {
 
   syncDirectory() {
     const fd = openSync(this.directory, constants.O_RDONLY)
-    try { fsyncSync(fd) } finally { closeSync(fd) }
+    try { syncFd(fd) } finally { closeSync(fd) }
   }
 
   open() {

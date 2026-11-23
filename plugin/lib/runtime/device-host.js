@@ -6,6 +6,7 @@ import { mkdir, lstat, realpath, open, readFile, writeFile, rename, rm, readdir,
 import { resolve, isAbsolute, dirname, join } from 'node:path'
 import { DeviceError, DEVICE_PREPARATION_MS } from '../devices.js'
 import { DockerNodes } from './containers.js'
+import { currentUid, currentGid } from '../compat.js'
 
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const fail = (message, code = 'DEVICE_UNAVAILABLE') => { throw new DeviceError(message, code) }
@@ -29,7 +30,8 @@ async function read(path) {
 }
 
 export class DeviceDockerHost {
-  constructor({ stateRoot, deviceId, name, roots, image, uid = process.getuid(), gid = process.getgid(), onChange = () => {} }) {
+  constructor({ stateRoot, deviceId, name, roots, image, uid = currentUid(), gid = currentGid(), onChange = () => {} }) {
+    if (process.platform !== 'linux') fail('设备隔离执行当前需要Linux；原生Mac执行尚未接入')
     if (!validId(deviceId) || !Number.isSafeInteger(uid) || uid < 1 || !Number.isSafeInteger(gid) || gid < 1 || !Array.isArray(roots) || roots.length > 32) fail('设备配置无效')
     this.stateRoot = stateRoot;this.deviceId = deviceId;this.name = name;this.rootConfig = roots;this.uid = uid;this.gid = gid;this.onChange = onChange
     this.native = new DockerNodes({ stateRoot, schema: 'device_executor', image, uid, gid })

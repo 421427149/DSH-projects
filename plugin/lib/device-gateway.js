@@ -12,6 +12,7 @@ import { createServer } from 'node:http'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { constants, openSync, fstatSync, readFileSync, closeSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
+import { ownedAndPrivate } from './compat.js'
 
 const MAX_BODY = 4 * 1024 * 1024
 const OPERATIONS = { observation: new Set(['hello', 'chunk', 'ingest']), files: new Set(['poll', 'result']), shot: new Set(['ask', 'say', 'reply']) }
@@ -31,7 +32,7 @@ export function loadDeviceTokens(file) {
   const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW)
   try {
     const stat = fstatSync(fd)
-    if (!stat.isFile() || stat.uid !== process.getuid() || stat.mode & 0o077 || stat.size > 65536) throw Error('设备凭据文件须为当前用户私有文件')
+    if (!stat.isFile() || !ownedAndPrivate(stat) || stat.size > 65536) throw Error('设备凭据文件须为当前用户私有文件')
     const input = JSON.parse(readFileSync(fd, 'utf8'))
     if (!Array.isArray(input?.devices) || input.devices.length > 20) throw Error('设备凭据文件需要最多 20 个 devices')
     return input.devices

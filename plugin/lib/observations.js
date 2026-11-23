@@ -1,9 +1,10 @@
 /** Device observations are evidence, never owner instructions or project Library files. */
 import { createHash } from 'node:crypto'
-import { openSync, fsyncSync, closeSync } from 'node:fs'
+import { openSync, closeSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { FileBlobs, decodeFileChunk } from './files.js'
 import { BlobMaintenance } from './blob-maintenance.js'
+import { syncFd } from './compat.js'
 
 export const MAX_OBSERVATION_IMAGE = 2 * 1024 * 1024
 export const OBSERVATION_DEFAULTS = Object.freeze({ enabled: false, uploadImages: false,
@@ -136,9 +137,9 @@ export class Observations {
   sync() {
     // An upload ACK must survive a host crash, not just reach the JS projection.
     const fd = openSync(join(this.store.root, 'hub/events.jsonl'), 'r')
-    try { fsyncSync(fd) } finally { closeSync(fd) }
+    try { syncFd(fd) } finally { closeSync(fd) }
     const dir = openSync(dirname(join(this.store.root, 'hub/events.jsonl')), 'r')
-    try { fsyncSync(dir) } finally { closeSync(dir) }
+    try { syncFd(dir) } finally { closeSync(dir) }
   }
   policy(deviceId) {
     const saved = this.policies.get(key(deviceId))
@@ -320,7 +321,7 @@ export class Observations {
       for (const object of await this.blobs.listObjects()) if (targets.has(object.key) && !live.has(object.key)) await this.blobs.deleteObject(object)
       if (this.blobs instanceof FileBlobs && targets.size) {
         const directory = openSync(this.blobs.scope(this.scope(deviceId)), 'r')
-        try { fsyncSync(directory) } finally { closeSync(directory) }
+        try { syncFd(directory) } finally { closeSync(directory) }
       }
       return { ok: true, through }
     })

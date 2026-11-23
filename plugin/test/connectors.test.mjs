@@ -24,7 +24,7 @@ async function fixture(t, provider = 'graph-mail') {
   const configs = [{ id: 'source-1', name: '工作资料', provider, accountId: 'account-1', ...(provider === 'feishu-chat' ? { chatId: 'oc_fixture' } : {}), credentialFile, origin }]
   const options = { configs, root: join(root, 'state'), now: () => now, allowLoopback: true }
   const connectors = new Connectors(store, options)
-  t.after(async () => { connectors.close();server.closeAllConnections();server.close();rmSync(root,{ recursive:true,force:true }) })
+  t.after(async () => { connectors.close();server.closeAllConnections();server.close();rmSync(root,{ recursive:true,force:true,maxRetries:20,retryDelay:50 }) })
   const enable = c => c.configure({ id: 'source-1', enabled: true, expectedRevision: c.snapshot().items[0].revision, requestId: 'enable-' + c.hub.seq })
   return { root, store, configs, options, connectors, calls, token, credentialFile, origin, enable, handler: fn => { handler = fn }, advance: ms => { now += ms }, get now() { return now } }
 }
@@ -34,7 +34,7 @@ test('sources default paused, private config is bounded, and browser status neve
   const f = await fixture(t);await f.connectors.tick();assert.equal(f.calls.length,0)
   assert.equal(f.connectors.snapshot().items[0].enabled,false)
   const file = join(f.root,'config.json');writeFileSync(file,JSON.stringify({ sources:f.configs }),{mode:0o600});assert.equal(loadConnectorConfig(file,{allowLoopback:true}).length,1);const loaded=new Connectors(f.store,{...f.options,configs:loadConnectorConfig(file,{allowLoopback:true})});loaded.close()
-  chmodSync(file,0o644);assert.throws(()=>loadConnectorConfig(file,{allowLoopback:true}),/私有/)
+  if (process.platform !== 'win32') { chmodSync(file,0o644);assert.throws(()=>loadConnectorConfig(file,{allowLoopback:true}),/私有/) }
   assert.doesNotMatch(JSON.stringify(f.connectors.snapshot()),/fixture-private|token.json|deltatoken/)
   assert.throws(()=>new Connectors(f.store,{...f.options,configs:[{...f.configs[0],origin:'https://attacker.invalid'}]}),/服务地址/)
 })
@@ -90,10 +90,10 @@ test('Feishu advances bounded chat pagination, filters old messages, reuses Mira
   const message=(id,text,date='1793836801000')=>({message_id:id,create_time:date,update_time:date,chat_id:'oc_fixture',msg_type:'text',body:{content:JSON.stringify({text})},sender:{id:'ou_person'}})
   f.handler(req=>({code:0,data:{items:[message('om_old','past','1793750400000'),message('om_1','ALPHA 飞书')],has_more:!req.url.includes('page_token'),...(req.url.includes('page_token')?{}:{page_token:'page-2-private'})}}))
   await f.connectors.tick();f.advance(61000);await f.connectors.tick();assert.ok(f.calls.at(-1).url.includes('page_token=page-2-private'));assert.equal(f.connectors.records.size,1)
-  const projects=new ProjectStore(join(f.root,'projects'),{warn(){}});projects.load();const personal=new PersonalMira(f.store,{status:()=> 'idle'},projects,{}, {connectors:f.connectors})
+  const projects=new ProjectStore(join(f.root,'projects'),{warn(){}});projects.load();const personal=new PersonalMira(f.store,{status:()=> 'idle'},projects,{}, {connectors:f.connectors});t.after(()=>personal.close()) // Windows cannot delete the directory while the index's database is open; the fixture's own cleanup runs first, so close it here as well
   const source=personal.search({query:'ALPHA'}).items[0];assert.equal(source.trust,'external');assert.equal(source.source,'lark');assert.equal(source.externalId,'om_1')
   f.handler(()=>({code:0,data:{items:[message('om_1','BETA 修订')],has_more:false}}));f.advance(61000);await f.connectors.tick();assert.equal(personal.search({query:'ALPHA'}).items.length,0);assert.equal(personal.source(source.ref).text.includes('ALPHA'),true)
-  f.handler(()=>({code:0,data:{items:[{...message('om_1',''),deleted:true}],has_more:false}}));f.advance(61000);await f.connectors.tick();assert.equal(personal.search({query:'BETA'}).items.length,0)
+  f.handler(()=>({code:0,data:{items:[{...message('om_1',''),deleted:true}],has_more:false}}));f.advance(61000);await f.connectors.tick();assert.equal(personal.search({query:'BETA'}).items.length,0);personal.close()
 })
 
 test('restoring an unreadable credential file resumes with the same valid token, without losing the cursor', async t => {
@@ -133,7 +133,7 @@ test('SIGKILL after durable cursor write but before ready status resumes that cu
   const {fork}=await import('node:child_process'),entry=join(f.root,'crash.mjs')
   writeFileSync(entry,`import {ProjectStore} from ${JSON.stringify(new URL('../lib/store.js',import.meta.url).href)};import {Connectors} from ${JSON.stringify(new URL('../lib/connectors.js',import.meta.url).href)};const store=new ProjectStore(process.argv[2],{warn(){}});store.load();const c=new Connectors(store,JSON.parse(process.argv[3]));const checkpoint=c.checkpoint.bind(c);c.checkpoint=(...args)=>{checkpoint(...args);process.kill(process.pid,'SIGKILL')};await c.tick();process.exit(2);`)
   const child=fork(entry,[f.store.root,JSON.stringify({...f.options,configs:f.configs})],{stdio:'ignore',execArgv:[],env:{PATH:process.env.PATH}})
-  const [code,signal]=await once(child,'exit');assert.equal(code,null);assert.equal(signal,'SIGKILL')
+  const [code,signal]=await once(child,'exit');if (process.platform === 'win32') assert.notEqual(code, 0) /* a killed Windows process reports an exit code, no signal */;else { assert.equal(code,null);assert.equal(signal,'SIGKILL') }
   const loaded=new ProjectStore(f.store.root,{warn(){}});loaded.load();const c=new Connectors(loaded,f.options);t.after(()=>c.close());const count=f.calls.length;await c.tick()
   assert.ok(f.calls.slice(count).some(r=>r.url.includes('deltatoken=durable-before-ready')));assert.equal(loaded.get('hub').events.filter(e=>e.type==='connector.record').length,1)
 })

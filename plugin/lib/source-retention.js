@@ -1,8 +1,9 @@
 /** Owner-controlled source-body retention. Conversation/project/knowledge logs are not purged. */
 import { createHash, randomUUID } from 'node:crypto'
-import { constants, mkdirSync, lstatSync, readFileSync, openSync, closeSync, writeSync, writeFileSync, readSync, fsyncSync, renameSync, unlinkSync, realpathSync, fstatSync } from 'node:fs'
+import { constants, mkdirSync, lstatSync, readFileSync, openSync, closeSync, writeSync, writeFileSync, readSync, renameSync, unlinkSync, realpathSync, fstatSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { PersonalSearchIndex, discardPersonalSearchCache } from './personal-search-index.js'
+import { ownedAndPrivate, ownedByCurrentUser, syncFd } from './compat.js'
 
 const DAY = 86400000
 const RAW = new Set(['pc.window', 'pc.signal', 'observation.accepted', 'connector.record'])
@@ -17,10 +18,10 @@ function sanitized(event, target, plan) {
 function regular(path) {
   let stat
   try { stat = lstatSync(path) } catch (e) { if (e.code === 'ENOENT') return null;throw e }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid()) throw Error('保留清理文件归属无效')
+  if (!stat.isFile() || stat.isSymbolicLink() || !ownedByCurrentUser(stat)) throw Error('保留清理文件归属无效')
   return stat
 }
-function syncDirectory(path) { const fd = openSync(path, constants.O_RDONLY);try { fsyncSync(fd) } finally { closeSync(fd) } }
+function syncDirectory(path) { const fd = openSync(path, constants.O_RDONLY);try { syncFd(fd) } finally { closeSync(fd) } }
 export function retentionPolicy(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !['rawDays', 'summaryDays'].includes(k))) throw Error('文字保留设置字段无效')
   const policy = { rawDays: 0, summaryDays: 0, ...value }
@@ -78,7 +79,7 @@ export class SourceRetention {
   validateJournal() {
     if (realpathSync(dirname(this.file)) !== join(realpathSync(this.store.root), 'hub') || !regular(this.file)) throw Error('原日志位置或归属无效')
   }
-  sync() { this.validateJournal();const fd = openSync(this.file, constants.O_RDONLY | constants.O_NOFOLLOW);try { fsyncSync(fd) } finally { closeSync(fd) };syncDirectory(dirname(this.file)) }
+  sync() { this.validateJournal();const fd = openSync(this.file, constants.O_RDONLY | constants.O_NOFOLLOW);try { syncFd(fd) } finally { closeSync(fd) };syncDirectory(dirname(this.file)) }
   append(event) { this.validateJournal();const result = this.store.append('hub', event);this.sync();return result }
   policy() { return { ...retentionPolicy(this.saved?.policy ?? {}), revision: this.saved?.seq ?? 0 } }
   epoch() { return this.lastCompletedSeq ?? 0 }
@@ -125,13 +126,13 @@ export class SourceRetention {
     this.validateJournal()
     mkdirSync(this.root, { recursive: true, mode: 0o700 })
     const stat = lstatSync(this.root)
-    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid() || stat.mode & 0o077) throw Error('保留清理目录须为私有实际目录')
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !ownedAndPrivate(stat)) throw Error('保留清理目录须为私有实际目录')
     const marker = join(this.root, 'owner.json'), expected = { component: 'mira-source-retention', hubRoot: realpathSync(this.store.root), version: 1 }
     if (regular(marker)) {
       if (JSON.stringify(JSON.parse(readFileSync(marker, 'utf8'))) !== JSON.stringify(expected)) throw Error('保留清理目录归属无效')
     } else {
       const fd = openSync(marker, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-      try { writeFileSync(fd, JSON.stringify(expected));fsyncSync(fd) } finally { closeSync(fd) }
+      try { writeFileSync(fd, JSON.stringify(expected));syncFd(fd) } finally { closeSync(fd) }
       syncDirectory(this.root);syncDirectory(dirname(this.root))
     }
   }
@@ -167,7 +168,7 @@ export class SourceRetention {
       }
       if (pending.length) line(pending)
       if (seen.size !== targets.size) throw Error('清理来源不完整')
-      fsyncSync(output);closeSync(output);output = undefined
+      syncFd(output);closeSync(output);output = undefined
       this.replaceJournal(temporary, identity)
     } finally {
       closeSync(input);if (output !== undefined) closeSync(output)

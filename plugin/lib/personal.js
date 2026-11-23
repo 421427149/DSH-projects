@@ -9,6 +9,7 @@ import { PersonalSearchIndex, searchText } from './personal-search-index.js'
 import { findAssistant, modelLabel, pickModel } from './members.js'
 import { landingNote } from './worktrees.js'
 import { feishuConversations, own as ownWords, speakerOf } from './followups.js'
+import { presentNatively } from './compat.js'
 
 const required = (value, name, limit = 20000) => {
   if (typeof value !== 'string' || !value.trim() || value.length > limit || !value.isWellFormed()) throw new Error(`${name} 无效`)
@@ -515,7 +516,7 @@ function insideRoot(filePath, root) {
  */
 export function restrictPersonalAgent(agent, hubTools, attachmentRoot) {
   const allowed = new Set([...hubTools, ...PERSONAL_NATIVE_TOOLS, ...(attachmentRoot ? ['read'] : [])])
-  agent.ctx.tools.presentAs('native')
+  presentNatively(agent.ctx)
   const denied = agent.ctx.tools.schemas().map(t => t.name).filter(name => !allowed.has(name))
   if (denied.length) agent.ctx.tools.restrict({ deny: denied })
   agent.ctx.tools.guard(exec => {

@@ -1,11 +1,12 @@
 /** Explicit project publication; working directories are never scanned. */
 import { constants } from 'node:fs'
-import { mkdir, lstat, realpath, open, link, unlink, readdir } from 'node:fs/promises'
+import { mkdir, lstat, realpath, open, link, unlink, readdir, rmdir, stat } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute, join, resolve, sep, posix } from 'node:path'
 import { TextDecoder } from 'node:util'
+import { ownedAndPrivate, POSIX } from './compat.js'
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024
 export const FILE_CHUNK_BYTES = 512 * 1024
@@ -54,7 +55,7 @@ export class FileBlobs {
   async initialize() {
     await mkdir(this.root, { recursive: true, mode: 0o700 })
     const info = await lstat(this.root)
-    if (!info.isDirectory() || await realpath(this.root) !== this.root || info.uid !== process.getuid() || (info.mode & 0o077)) fail('文件存储不是受保护的规范目录')
+    if (!info.isDirectory() || await realpath(this.root) !== this.root || !ownedAndPrivate(info)) fail('文件存储不是受保护的规范目录')
   }
   scope(projectId) {
     if (typeof projectId !== 'string' || !projectId || projectId.length > 160 || !projectId.isWellFormed()) fail('项目身份无效')
@@ -73,6 +74,8 @@ export class FileBlobs {
     if (this.sharedLock) return this.sharedLock(run)
     await this.initialize()
     if (process.platform === 'darwin') return this.openLock(run)
+    // Windows has neither flock nor O_EXLOCK; creating a directory is atomic there too.
+    if (!POSIX) return this.mkdirLock(run)
     const child = spawn('flock', ['-x', join(this.root, '.quota.lock'), '-c', 'echo locked; read'], { stdio: ['pipe', 'pipe', 'ignore'] })
     let timer, settled = false
     try {
@@ -101,12 +104,28 @@ export class FileBlobs {
     }
     try { return await run() } finally { await handle.close() }
   }
+  async mkdirLock(run) {
+    const path = join(this.root, '.quota.lock.d'), deadline = Date.now() + 15000
+    for (;;) {
+      try { await mkdir(path);break } catch (error) {
+        if (error.code !== 'EEXIST' && error.code !== 'EPERM') throw error
+        // A lock left behind by a process that died is taken over once it is clearly stale.
+        const age = Date.now() - (await stat(path).catch(() => null))?.mtimeMs
+        if (age < 60000) {
+          if (Date.now() > deadline) throw new Error('文件存储锁等待超时')
+          await new Promise(resolve => setTimeout(resolve, 50));continue
+        }
+        await rmdir(path).catch(() => {})
+      }
+    }
+    try { return await run() } finally { await rmdir(path).catch(() => {}) }
+  }
   async listObjects(directory = this.root) {
     await this.initialize()
     const output = []
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name)
-      if (path === join(this.root, '.quota.lock')) continue
+      if (path === join(this.root, '.quota.lock') || path === join(this.root, '.quota.lock.d')) continue
       const info = await lstat(path)
       if (info.isSymbolicLink()) fail('文件存储包含符号链接，停止扫描')
       if (info.isDirectory()) output.push(...await this.listObjects(path))
@@ -117,7 +136,7 @@ export class FileBlobs {
   }
   async usage() { return (await this.listObjects()).reduce((sum, object) => sum + object.size, 0) }
   async deleteObject(object) {
-    if (typeof object.key !== 'string' || !object.key.startsWith(this.root + '/')) fail('垃圾回收对象超出存储目录')
+    if (typeof object.key !== 'string' || !object.key.startsWith(this.root + sep)) fail('垃圾回收对象超出存储目录')
     const info = await lstat(object.key)
     if (!info.isFile() || info.isSymbolicLink()) fail('垃圾回收对象不是普通文件')
     await unlink(object.key)
@@ -128,7 +147,7 @@ export class FileBlobs {
     if (create) await mkdir(path, { mode: 0o700 }) .catch(error => { if (error.code !== 'EEXIST') throw error })
     let info
     try { info = await lstat(path) } catch (error) { if (error.code === 'ENOENT') fail('项目文件内容不存在');throw error }
-    if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o077)) fail('项目文件目录不受保护')
+    if (!info.isDirectory() || !ownedAndPrivate(info)) fail('项目文件目录不受保护')
     return path
   }
   async read(projectId, sha256) {
@@ -162,8 +181,10 @@ export class FileBlobs {
         else if (this.quotaBytes !== undefined && await this.usage() > this.quotaBytes) fail('文件存储配额已满', 'FILE_QUOTA_EXCEEDED')
         try { await link(temp, dest) }
         catch (error) { if (error.code !== 'EEXIST') throw error;await this.read(projectId, sha256) }
-        const dir = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY)
-        try { await dir.sync() } finally { await dir.close() }
+        if (POSIX) {
+          const dir = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY)
+          try { await dir.sync() } finally { await dir.close() }
+        }
         return sha256
       })
     } finally { await handle.close().catch(() => {});await unlink(temp).catch(() => {}) }

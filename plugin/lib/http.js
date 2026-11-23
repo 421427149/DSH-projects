@@ -124,7 +124,8 @@ function card(project, thread, driver, deviceExecutions) {
  */
 export function shownInputs(paths, roots, home = homedir()) {
   const bases = roots.filter(Boolean).map(r => r.replace(/\/+$/, ''))
-  const shown = paths.map(p => {
+  const shown = paths.map(raw => {
+    const p = raw.replaceAll('\\', '/') // shown with forward slashes, which is also how the roots and home are compared below
     for (const base of bases) if (p.startsWith(base + '/')) return p.slice(base.length + 1)
     return home && p.startsWith(home + '/') ? '~' + p.slice(home.length) : p
   })

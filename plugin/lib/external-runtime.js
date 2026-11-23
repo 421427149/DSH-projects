@@ -7,6 +7,7 @@ import { delimiter, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { defaultFolder } from './folders.js'
+import { POSIX } from './compat.js'
 
 export const EXTERNAL_PROVIDERS = ['claude', 'codex']
 export const RUNTIME_LABELS = { dsh: 'DSH', claude: 'Claude Code', codex: 'Codex' }
@@ -136,6 +137,8 @@ export class ExternalRuntime {
 
   /** Which outside runners this machine can actually start; the page greys out the rest. Looked up at most once a minute. */
   available() {
+    // The bridge to a runner is a Unix socket, which Windows does not have.
+    if (!POSIX) return {}
     const now = Date.now()
     if (this.checked && now - this.checked.at < 60_000) return this.checked.value
     const runnable = file => { try { accessSync(file, constants.X_OK); return true } catch { return false } }
@@ -164,7 +167,7 @@ export class ExternalRuntime {
 
   ensure(project, key) {
     const provider = this.provider(project, key)
-    if (!EXTERNAL_PROVIDERS.includes(provider)) throw new Error('这个成员没有配置外部 runtime')
+    if (!EXTERNAL_PROVIDERS.includes(provider) || !POSIX) throw new Error(this.provider(project, key) === 'dsh' ? '这个成员没有配置外部 runtime' : '外部 runtime（Claude Code / Codex）需要 Unix socket，Windows 上不可用')
     const previous = project.sessions.get(key)
     if (previous && previous.runtime === provider && (previous.configRevision ?? 0) === (project.configRevision ?? 0)) return { binding: previous, continuity: false, returning: false }
     const sessionId = `external-${randomUUID()}`

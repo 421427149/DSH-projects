@@ -1,13 +1,14 @@
 /** Configured read-only sources. Domain records are durable before private page checkpoints. */
-import { constants, openSync, closeSync, fstatSync, readFileSync, writeFileSync, fsyncSync, renameSync, mkdirSync, lstatSync, unlinkSync } from 'node:fs'
+import { constants, openSync, closeSync, fstatSync, readFileSync, writeFileSync, renameSync, mkdirSync, lstatSync, unlinkSync } from 'node:fs'
 import { join, isAbsolute, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { connectorPage, hash } from './connector-adapters.js'
+import { ownedAndPrivate, syncFd } from './compat.js'
 const id=value=>{if(typeof value!=='string'||!/^[\w-]{1,100}$/.test(value))throw Error('连接器标识无效');return value}
 function privateJSON(file) {
   if(!isAbsolute(file))throw Error('来源设置需要绝对路径')
   const fd=openSync(file,constants.O_RDONLY|constants.O_NOFOLLOW)
-  try {const stat=fstatSync(fd);if(!stat.isFile()||stat.uid!==process.getuid()||stat.mode&0o077||stat.size>65536)throw Error('来源设置与凭据须为当前用户私有文件');return JSON.parse(readFileSync(fd,'utf8'))}finally{closeSync(fd)}
+  try {const stat=fstatSync(fd);if(!stat.isFile()||!ownedAndPrivate(stat)||stat.size>65536)throw Error('来源设置与凭据须为当前用户私有文件');return JSON.parse(readFileSync(fd,'utf8'))}finally{closeSync(fd)}
 }
 function definition(raw,{allowLoopback=false}={}) {
   if(!raw||typeof raw!=='object'||Object.keys(raw).some(k=>!['id','name','provider','accountId','chatId','credentialFile','origin'].includes(k)))throw Error('来源设置字段无效')
@@ -26,14 +27,14 @@ export function loadConnectorConfig(file,options) {
 }
 function privateWrite(file,value) {
   const temp=file+'.'+randomUUID()+'.tmp';const fd=openSync(temp,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600)
-  try {writeFileSync(fd,JSON.stringify(value));fsyncSync(fd)}finally{closeSync(fd)}
-  try {renameSync(temp,file);const directory=openSync(dirname(file),constants.O_RDONLY);try{fsyncSync(directory)}finally{closeSync(directory)}}finally{try{unlinkSync(temp)}catch{}}
+  try {writeFileSync(fd,JSON.stringify(value));syncFd(fd)}finally{closeSync(fd)}
+  try {renameSync(temp,file);const directory=openSync(dirname(file),constants.O_RDONLY);try{syncFd(directory)}finally{closeSync(directory)}}finally{try{unlinkSync(temp)}catch{}}
 }
 export class Connectors {
   constructor(store,{configs=[],root,now=Date.now,fetch:fetcher=fetch,allowLoopback=false,retention}={}) {
     this.store=store;this.now=now;this.retention=retention;this.fetch=fetcher;this.root=root||join(store.root,'_connector-state');this.closed=false
     this.configs=new Map();this.registered=new Map();this.policies=new Map();this.statuses=new Map();this.records=new Map();this.requests=new Map();this.busy=new Map()
-    mkdirSync(this.root,{recursive:true,mode:0o700});const stat=lstatSync(this.root);if(!stat.isDirectory()||stat.isSymbolicLink()||stat.uid!==process.getuid()||stat.mode&0o077)throw Error('连接器状态目录须为当前用户私有目录')
+    mkdirSync(this.root,{recursive:true,mode:0o700});const stat=lstatSync(this.root);if(!stat.isDirectory()||stat.isSymbolicLink()||!ownedAndPrivate(stat))throw Error('连接器状态目录须为当前用户私有目录')
     for(const e of this.hub.events)this.fold(e)
     if(!Array.isArray(configs)||configs.length>20)throw Error('连接器最多20个来源')
     const definitions=configs.map(raw=>definition(raw,{allowLoopback})), unique=new Set()
@@ -55,7 +56,7 @@ export class Connectors {
     if(e.type==='connector.status')this.statuses.set(e.connectorId,e)
     if(e.type==='connector.record')this.records.set(e.connectorId+'|'+e.externalId,e)
   }
-  sync(){const fd=openSync(join(this.store.root,'hub/events.jsonl'),'r');try{fsyncSync(fd)}finally{closeSync(fd)};const dir=openSync(join(this.store.root,'hub'),'r');try{fsyncSync(dir)}finally{closeSync(dir)}}
+  sync(){const fd=openSync(join(this.store.root,'hub/events.jsonl'),'r');try{syncFd(fd)}finally{closeSync(fd)};const dir=openSync(join(this.store.root,'hub'),'r');try{syncFd(dir)}finally{closeSync(dir)}}
   append(event){const e=this.store.append('hub',event);this.sync();return e}
   configure({id:sourceId,enabled,expectedRevision,requestId}) {
     id(sourceId);id(requestId);if(typeof enabled!=='boolean'||!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error('来源同步设置无效')

@@ -2,6 +2,7 @@
 import { lstat, readFile } from 'node:fs/promises'
 import { FileBlobs } from './files.js'
 import { S3FileBlobs } from './s3-files.js'
+import { ownedAndPrivate } from './compat.js'
 
 export function postgresBlobLock(pool, name) {
   return async run => {
@@ -18,7 +19,7 @@ export function postgresBlobLock(pool, name) {
 async function privateConfig(path) {
   if (typeof path !== 'string' || !path) throw new Error('S3需要显式私有配置 MIRA_S3_CONFIG')
   const info = await lstat(path)
-  if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid() || (info.mode & 0o077)) throw new Error('S3配置必须是当前用户持有的600私有文件')
+  if (!info.isFile() || info.isSymbolicLink() || !ownedAndPrivate(info)) throw new Error('S3配置必须是当前用户持有的600私有文件')
   return JSON.parse(await readFile(path, 'utf8'))
 }
 

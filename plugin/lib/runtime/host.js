@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createTools, visibleTo } from '../tools.js'
 import { rolePrompt, wakeText, continuityNotice, NUDGE, UNANSWERED } from '../protocol.js'
+import { presentNatively } from '../compat.js'
 
 export class PostgresSessionHost {
   constructor(ctx, control, { defineTool, makeMessage, owner = 'dsh-' + randomUUID(), labels = ['os:linux'], leaseMs = 30000, concurrency = 4 } = {}) {
@@ -23,7 +24,7 @@ export class PostgresSessionHost {
     // containerized, both their model visibility and actual dispatch are denied.
     const native = this.ctx.tools.schemas().map(t => t.name).filter(name => name !== 'run_code')
     if (native.length) agent.ctx.tools.restrict({ deny: native })
-    agent.ctx.tools.presentAs('native')
+    presentNatively(agent.ctx)
     agent.ctx.tools.guard(exec => {
       const current = this.slots.get(agent.id)
       return current !== slot || slot.lost || this.stopped || !allowed.has(exec.name) ? '运行时会话只允许当前认领的项目平台工具' : undefined
