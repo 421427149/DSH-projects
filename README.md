@@ -4,6 +4,8 @@
 
 [English](README.en.md)
 
+[![DSH-projects 演示片，1 分 47 秒](docs/launch/film-cover-zh.jpg)](https://hovocope135-tech.github.io/DSH-projects/launch/dsh-projects-film.mp4)
+
 你是否也经常在各个Session间反复切换，为配置各个agent感觉头疼？你是否也希望能够管理好大量的agent对话，而不需要自己来回搬运上下文？
 
 如果你也希望探索更好的context管理方式，DSH-projects希望提供下一代的人机协作模式，隐藏所有不必要的细节，让人focus在真正重要的事情上，降低人机协作的成本。
